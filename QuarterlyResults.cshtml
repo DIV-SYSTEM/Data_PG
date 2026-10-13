@@ -1,0 +1,359 @@
+﻿@using Umbraco.Cms.Web.Common.PublishedModels;
+@using Umbraco.Cms.Core.Models.Blocks;
+@using Umbraco.Cms.Core.Models;
+@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+@{
+    Layout = "~/Views/Layout/_Master.cshtml";
+
+    var quarterlyResultsList = Model.Value<BlockListModel>("quarterlyResultsList");
+    
+    // Backend se Toggle ki value lana
+    var showPagination = Model.Value<bool>("showPagination", fallback: Fallback.ToDefaultValue, defaultValue: false);
+
+    // 🧠 NAYA LOGIC: Backend se Archive Button ka Title fetch karna
+    var archiveTitle = Model.Value<string>("archiveButtonTitle");
+
+    // 🧠 MASTER LOGIC: Check URL for Query String '?view=archive'
+    bool isArchiveView = Context.Request.Query["view"] == "archive";
+
+    // 🧠 DYNAMIC BUTTON LOGIC:
+    string buttonText = isArchiveView ? $"Back to {Model.Name}" : archiveTitle;
+    string buttonLink = isArchiveView ? Model.Url() : Model.Url() + "?view=archive";
+
+    // 🧠 SMART C# PRE-FILTERING (For Accordions)
+    var validYearBlocks = new List<Tuple<string, List<Umbraco.Cms.Core.Models.Blocks.BlockListItem>>>();
+
+    if (quarterlyResultsList != null && quarterlyResultsList.Any())
+    {
+        foreach (var yearBlock in quarterlyResultsList)
+        {
+            var financialYear = yearBlock.Content.Value<string>("financialYear");
+            var rawReportsList = yearBlock.Content.Value<BlockListModel>("reportsList");
+
+            var filteredReports = new List<Umbraco.Cms.Core.Models.Blocks.BlockListItem>();
+            
+            if (rawReportsList != null)
+            {
+                foreach (var reportBlock in rawReportsList)
+                {
+                    var isArchived = reportBlock.Content.Value<bool>("isArchived");
+                    
+                    // 🧠 DYNAMIC FILTERING LOGIC
+                    if (isArchiveView && !isArchived) { continue; }
+                    if (!isArchiveView && isArchived) { continue; }
+                    
+                    filteredReports.Add(reportBlock);
+                }
+            }
+
+            if (filteredReports.Any())
+            {
+                validYearBlocks.Add(new Tuple<string, List<Umbraco.Cms.Core.Models.Blocks.BlockListItem>>(financialYear, filteredReports));
+            }
+        }
+    }
+}
+
+<!-- 🔥 1. IMPORTING COMMON INNER BANNER 🔥 -->
+@await Html.PartialAsync("~/Views/Partials/singleblock/_InnerBanner.cshtml", Model)
+
+<!-- 🔥 2. MAIN CONTENT SECTION 🔥 -->
+<section class="pageSpc" id="content">
+    <div class="container">
+        <div class="highlight">
+            <div class="region region-highlighted">
+                <div data-drupal-messages-fallback="" class="hidden"></div>
+            </div>
+        </div>
+
+        <div class="row gx-5">
+            <div class="">
+                <div class="views-element-container">
+
+                    <!-- 🔥 FIX: DYNAMIC ARCHIVE BUTTON 🔥 -->
+                    @if (!string.IsNullOrWhiteSpace(archiveTitle))
+                    {
+                        <div class="mb-5 pb-4">
+                            <div align="right">
+                                <a class="button" href="@buttonLink">@buttonText</a>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- SEARCH FORM -->
+                    <form class="views-exposed-form mb-4" autocomplete="off" onsubmit="return false;" id="views-exposed-form-annual-quarterly-results-page-2">
+                        <div class="js-form-item form-item js-form-type-select form-item-field-financial-year-target-id js-form-item-field-financial-year-target-id">
+                            <label for="edit-field-financial-year-target-id">Financial Year</label>
+                            <select id="edit-field-financial-year-target-id" size="1" class="form-select">
+                                <option value="All" selected="selected">Select</option>
+                                @foreach (var year in validYearBlocks.Select(x => x.Item1).Distinct())
+                                {
+                                    <option value="@year">@year</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="form-actions js-form-wrapper form-wrapper" id="edit-actions">
+                            <input type="submit" id="edit-submit-annual-quarterly-results" value="Search" class="button js-form-submit form-submit">
+                            <input type="button" id="btn-reset" value="Reset" class="button js-form-submit form-submit" style="display:none; margin-left:8px; background-color:#6c757d; border-color:#6c757d;">
+                        </div>
+                    </form>
+
+                    <!-- DYNAMIC ACCORDION (Years -> Quarters) -->
+                    <div class="accordion customAccordion" id="accordionFlushExample">
+
+                        @if (validYearBlocks.Any())
+                        {
+                            int accordionIndex = 0;
+
+                            foreach (var yearBlock in validYearBlocks)
+                            {
+                                var financialYear = yearBlock.Item1;
+                                var reportsList = yearBlock.Item2;
+                                var targetId = "flush-collapse-" + accordionIndex;
+
+                                <div class="accordion-wrap year-accordion-item" data-year="@financialYear">
+                                    <h4 class="accordion-header">
+                                        <a class="collapsed" data-bs-toggle="collapse" data-bs-target="#@targetId">@financialYear</a>
+                                    </h4>
+
+                                    <div id="@targetId" class="accordion-collapse collapse" data-bs-parent="#accordionFlushExample">
+                                        <div class="accordion-body">
+                                            <div class="reportBoxList">
+
+                                                @foreach (var reportBlock in reportsList)
+                                                {
+                                                    var reportTitle = reportBlock.Content.Value<string>("reportTitle");
+                                                    var thumbnailImage = reportBlock.Content.Value<IPublishedContent>("thumbnailImage")?.Url()
+                                                        ?? "/sites/default/files/styles/pdf_image_style/public/default_images/book-placeholder_1_1.png";
+
+                                                    var pdfDocument = reportBlock.Content.Value<IPublishedContent>("pdfDocument");
+                                                    var externalLink = reportBlock.Content.Value<Umbraco.Cms.Core.Models.Link>("externalLink");
+                                                    var manualFileSize = reportBlock.Content.Value<string>("fileSize"); 
+
+                                                    var finalUrl = "#";
+                                                    var finalTitle = reportTitle;
+                                                    var isExternal = false;
+                                                    string displayFileSize = manualFileSize;
+
+                                                    if (externalLink != null)
+                                                    {
+                                                        finalUrl = externalLink.Url;
+                                                        finalTitle = externalLink.Name ?? reportTitle;
+                                                        isExternal = true;
+                                                    }
+                                                    else if (pdfDocument != null)
+                                                    {
+                                                        finalUrl = pdfDocument.Url();
+                                                        finalTitle = pdfDocument.Name;
+                                                        
+                                                        if (string.IsNullOrWhiteSpace(displayFileSize))
+                                                        {
+                                                            var bytes = pdfDocument.Value<long>("umbracoBytes");
+                                                            if (bytes > 0)
+                                                            {
+                                                                if (bytes >= 1048576) 
+                                                                {
+                                                                    displayFileSize = (bytes / 1048576D).ToString("0.##") + " MB";
+                                                                }
+                                                                else 
+                                                                {
+                                                                    displayFileSize = (bytes / 1024D).ToString("0.##") + " KB";
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    
+                                                    string hoverTooltip = string.IsNullOrEmpty(displayFileSize) ? reportTitle : $"{reportTitle} ({displayFileSize})";
+
+                                                    <div class="reportBox">
+                                                        <div class="imgWrap">
+                                                            <span><img alt="@reportTitle" src="@thumbnailImage" title="@hoverTooltip"></span>
+                                                        </div>
+
+                                                        <div class="reportBoxContent">
+                                                            <h4>@reportTitle</h4>
+                                                        </div>
+
+                                                        <div class="downloadBox">
+                                                            <div class="iconWrap">
+                                                                <div class="item-list">
+                                                                    <ul>
+                                                                        <li>
+                                                                            <a href="@finalUrl" target="_blank" title="@finalTitle"></a>
+                                                                            <div class="iconImg">
+                                                                                @if (isExternal)
+                                                                                {
+                                                                                    <img src="https://www.powergrid.in/themes/powergrid/images/external-link-icon-white.png" alt="External Link">
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    <img src="https://www.powergrid.in/themes/powergrid/images/pdf-white.png" alt="PDF Icon">
+                                                                                }
+                                                                            </div>
+                                                                            @if (!string.IsNullOrEmpty(displayFileSize) && !isExternal)
+                                                                            {
+                                                                                <div class="fileSize">
+                                                                                    <span class="fileSize">&nbsp;(@displayFileSize)</span>
+                                                                                </div>
+                                                                            }
+                                                                        </li>
+                                                                    </ul>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                accordionIndex++;
+                            }
+                        }
+                        else
+                        {
+                            <div id="no-records-msg" style="margin-bottom: 30px; font-size: 15px; color: #333;">
+                                No active record(s) for this Section.
+                            </div>
+                        }
+                    </div>
+
+                    <!-- 🔥 PURE CLIENT-SIDE PAGINATION CONTAINER 🔥 -->
+                    <!-- Always in DOM so JS can manipulate it without throwing null errors -->
+                    <div class="pager" id="pagination-block" role="navigation" aria-labelledby="pagination-heading" style="display:none;">
+                        <h4 id="pagination-heading" class="visually-hidden">Pagination</h4>
+                        <ul class="pager__items js-pager__items">
+                            <!-- JS will inject sliding window pagination here dynamically -->
+                        </ul>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 🧠 SMART YEAR FILTER & PAGINATION SCRIPT 🧠 -->
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const yearSelect = document.getElementById("edit-field-financial-year-target-id");
+        const btnSearch = document.getElementById("edit-submit-annual-quarterly-results");
+        const btnReset = document.getElementById("btn-reset");
+        const allAccordions = Array.from(document.querySelectorAll(".year-accordion-item"));
+        
+        const paginationBlock = document.getElementById("pagination-block");
+        const paginationList = paginationBlock ? paginationBlock.querySelector(".js-pager__items") : null;
+
+        // 🔥 BACKEND TOGGLE SE JS KO CONTROL KARNA 🔥
+        // Razor view se boolean check karega
+        const isPaginationEnabled = @(showPagination ? "true" : "false");
+        
+        // Agar ON hai toh 10 items, warna infinity (sab ek page par)
+        const ITEMS_PER_PAGE = isPaginationEnabled ? 10 : 999999; 
+        
+        let currentPage = 1;
+        let activeAccordions = [...allAccordions];
+
+        function closeAllAccordions() {
+            const openBodies = document.querySelectorAll('.accordion-collapse.show');
+            openBodies.forEach(body => body.classList.remove('show'));
+            const openHeaders = document.querySelectorAll('.accordion-header a:not(.collapsed)');
+            openHeaders.forEach(header => {
+                header.classList.add('collapsed');
+                header.setAttribute('aria-expanded', 'false');
+            });
+        }
+
+        window.addEventListener("pageshow", function(event) {
+            if (event.persisted) { closeAllAccordions(); }
+        });
+
+        function renderPagination() {
+            if (!paginationList) return;
+
+            const totalPages = Math.ceil(activeAccordions.length / ITEMS_PER_PAGE);
+
+            // Agar pagination disabled hai YA pages 1 ya usse kam hain, toh UI hide kardo
+            if (!isPaginationEnabled || totalPages <= 1) {
+                paginationBlock.style.display = "none";
+                return;
+            }
+
+            paginationBlock.style.display = "block";
+            paginationList.innerHTML = "";
+
+            if (currentPage > 1) {
+                paginationList.innerHTML += `<li class="pager__item pager__item--first"><a href="#" data-page="1" title="Go to first page"><span class="visually-hidden">First page</span>« First</a></li>`;
+                paginationList.innerHTML += `<li class="pager__item pager__item--previous"><a href="#" data-page="${currentPage - 1}" title="Go to previous page" rel="prev"><span class="visually-hidden">Previous page</span>‹ Prev</a></li>`;
+            }
+
+            let startPage = Math.max(1, currentPage - 1);
+            let endPage = Math.min(totalPages, currentPage + 1);
+
+            if (currentPage === 1 && totalPages >= 3) endPage = 3;
+            if (currentPage === totalPages && totalPages >= 3) startPage = totalPages - 2;
+
+            for (let i = startPage; i <= endPage; i++) {
+                if (i === currentPage) {
+                    paginationList.innerHTML += `<li class="pager__item is-active"><a href="#" data-page="${i}" title="Current page" aria-current="page"><span class="visually-hidden">Current page</span>${i}</a></li>`;
+                } else {
+                    paginationList.innerHTML += `<li class="pager__item"><a href="#" data-page="${i}" title="Go to page ${i}"><span class="visually-hidden">Page</span>${i}</a></li>`;
+                }
+            }
+
+            if (currentPage < totalPages) {
+                paginationList.innerHTML += `<li class="pager__item pager__item--next"><a href="#" data-page="${currentPage + 1}" title="Go to next page" rel="next"><span class="visually-hidden">Next page</span>Next ›</a></li>`;
+                paginationList.innerHTML += `<li class="pager__item pager__item--last"><a href="#" data-page="${totalPages}" title="Go to last page"><span class="visually-hidden">Last page</span>Last »</a></li>`;
+            }
+
+            const pageLinks = paginationList.querySelectorAll("a");
+            pageLinks.forEach(link => {
+                link.addEventListener("click", function (e) {
+                    e.preventDefault();
+                    currentPage = parseInt(this.getAttribute("data-page"));
+                    closeAllAccordions();
+                    renderPage();
+                    document.getElementById("accordionFlushExample").scrollIntoView({ behavior: 'smooth', block: 'start' });
+                });
+            });
+        }
+
+        function renderPage() {
+            allAccordions.forEach(acc => acc.style.display = "none");
+
+            const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+            const endIndex = startIndex + ITEMS_PER_PAGE;
+
+            const pageItems = activeAccordions.slice(startIndex, endIndex);
+            pageItems.forEach(acc => acc.style.display = "");
+
+            renderPagination();
+        }
+
+        function executeSearch() {
+            const selectedYear = yearSelect.value;
+            
+            if (selectedYear !== "All") {
+                btnReset.style.display = "inline-block";
+                activeAccordions = allAccordions.filter(acc => acc.getAttribute("data-year") === selectedYear);
+            } else {
+                btnReset.style.display = "none";
+                activeAccordions = [...allAccordions];
+            }
+
+            currentPage = 1;
+            closeAllAccordions();
+            renderPage();
+        }
+
+        btnSearch.addEventListener("click", executeSearch);
+        
+        btnReset.addEventListener("click", function () {
+            yearSelect.value = "All";
+            executeSearch();
+        });
+
+        renderPage();
+    });
+</script>

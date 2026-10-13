@@ -1,0 +1,198 @@
+﻿@using System.Linq
+@using System.Collections.Generic
+@using Umbraco.Cms.Core.Models
+@using Umbraco.Cms.Core.Models.Blocks
+@using Umbraco.Cms.Core.Models.PublishedContent
+@using Umbraco.Extensions
+@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+@{
+    // 🔥 MAGIC LINE 1: Master Layout
+    Layout = "~/Views/Layout/_Master.cshtml";
+
+    // ==========================================
+    // 1. BANNER VARIABLES
+    // ==========================================
+    var bannerMedia = Model.Value<IPublishedContent>("bannerImage");
+    var bannerImage = bannerMedia != null ? bannerMedia.Url() : "https://www.powergrid.in/themes/powergrid/images/banner-bg1.jpg";
+    var pageTitle = Model.HasValue("customPageTitle") ? Model.Value<string>("customPageTitle") : Model.Name;
+    var homeNode = Model.Root();
+
+    // ==========================================
+    // 2. CERTIFICATES LIST DATA
+    // ==========================================
+    var certificatesList = Model.Value<BlockListModel>("certificatesList");
+}
+
+<!-- ================= INNER BANNER SECTION ================= -->
+<section class="innerBanner directorsBanner aos-init aos-animate" data-aos="fade-in">
+    <div class="bannerBg">
+        <div class="parallaxBg" style="top: 0%;">
+            <img loading="lazy" src="@bannerImage" width="1600" height="300" alt="@pageTitle">
+        </div>
+    </div>
+    <div class="container">
+        <div class="innerBannerWrap d-flex flex-column justify-content-between">
+            <div class="bannerSpc"></div>
+            <h1 class="h2">@pageTitle</h1>
+
+            <!-- 🔥 DYNAMIC BREADCRUMB 🔥 -->
+            <div class="region region-breadcrumb">
+                <div id="block-powergrid-breadcrumbs" class="block block-system block-system-breadcrumb-block">
+                    <ul class="breadcrumb">
+                        <li class="breadcrumb-item">
+                            <a href="@homeNode.Url()">@homeNode.Name</a>
+                        </li>
+
+                        @foreach (var item in Model.Ancestors().Reverse().Where(x => x.Level > 1 && x.Name != "Header & Nav Items"))
+                        {
+                            <li class="breadcrumb-item">
+                                @if (item.TemplateId > 0)
+                                {
+                                    <a href="@item.Url()">@item.Name</a>
+                                }
+                                else
+                                {
+                                    <a href="javascript:void(0);" style="cursor: default; text-decoration: none;">@item.Name</a>
+                                }
+                            </li>
+                        }
+
+                        <li class="breadcrumb-item active" aria-current="page">@pageTitle</li>
+                    </ul>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</section>
+
+<!-- ================= MAIN CONTENT SECTION ================= -->
+<section class="pageSpc" id="content">
+    <div class="container">
+        <div class="highlight">
+            <div class="region region-highlighted">
+                <div data-drupal-messages-fallback="" class="hidden"></div>
+            </div>
+        </div>
+
+        <div class="row gx-5">
+            <div class="">
+                <div class="js-view-dom-id-a400b4556dd4e7620af2d35a5a13bf1cddfa6b2ace36f1bd8ed31e2971381be3">
+
+                    <!-- 🔥 SEARCH BAR 🔥 -->
+                    <form class="views-exposed-form" autocomplete="off" onsubmit="return false;" accept-charset="UTF-8">
+                        <div class="js-form-item form-item js-form-type-textfield form-item-title js-form-item-title">
+                            <label for="edit-title">Title</label>
+                            <input type="text" id="cert-search-input" name="title" value="" size="30" maxlength="128" class="form-text" placeholder="Search certificates...">
+                        </div>
+                        <div class="form-actions js-form-wrapper form-wrapper">
+                            <!-- Button is visual only, search works on keyup via JS below -->
+                            <input type="button" value="Search" class="button js-form-submit form-submit">
+                        </div>
+                    </form>
+
+                    <!-- 🔥 CERTIFICATES LIST 🔥 -->
+                    <div class="annualReportsListWrap mt-4">
+                        <ul class="annualReportsList d-flex flex-wrap" id="certificate-list">
+
+                            @if (certificatesList != null && certificatesList.Any())
+                            {
+                                foreach (var cert in certificatesList)
+                                {
+                                    var img = cert.Content.Value<IPublishedContent>("certificateImage");
+                                    var imgUrl = img != null ? img.Url() : "";
+                                    var title = cert.Content.Value<string>("certificateTitle");
+                                    var file = cert.Content.Value<IPublishedContent>("certificateFile");
+                                    var fileUrl = file != null ? file.Url() : "#nolink";
+                                    
+                                    // Fetch the manual file size (if any)
+                                    var manualFileSize = cert.Content.Value<string>("fileSize");
+                                    string displayFileSize = manualFileSize;
+
+                                    // 🚀 AUTO FILE SIZE FETCHING LOGIC (MB / KB) 🚀
+                                    if (file != null && string.IsNullOrWhiteSpace(displayFileSize))
+                                    {
+                                        var bytes = file.Value<long>("umbracoBytes");
+                                        if (bytes > 0)
+                                        {
+                                            if (bytes >= 1048576) // If 1 MB or larger
+                                            {
+                                                displayFileSize = (bytes / 1048576D).ToString("0.##") + " MB";
+                                            }
+                                            else // Show in KB
+                                            {
+                                                displayFileSize = (bytes / 1024D).ToString("0.##") + " KB";
+                                            }
+                                        }
+                                    }
+
+                                    // Fallback if it's still empty
+                                    if (string.IsNullOrWhiteSpace(displayFileSize))
+                                    {
+                                        displayFileSize = "0 KB";
+                                    }
+
+                                    // 🧠 Tooltip string for hover
+                                    string hoverTooltip = $"{title} ({displayFileSize})";
+
+                                    <li class="cert-item" data-title="@title.ToLower()">
+                                        <div class="reportBox">
+                                            <div class="imgWrap">
+                                                <span>
+                                                    @if (!string.IsNullOrEmpty(imgUrl))
+                                                    {
+                                                        <!-- 🔥 ADDED HOVER TITLE TOOLTIP 🔥 -->
+                                                        <img alt="@title" src="@imgUrl" title="@hoverTooltip">
+                                                    }
+                                                </span>
+                                            </div>
+
+                                            <div class="reportBoxContent">
+                                                <h4>@title</h4>
+                                            </div>
+
+                                            <div class="downloadBox">
+                                                <div class="iconWrap">
+                                                    <a href="@fileUrl" target="_blank" title="@title"></a>
+                                                    <div class="iconImg">
+                                                        <img src="https://www.powergrid.in/themes/powergrid/images/pdf-white.png" alt="PDF">
+                                                    </div>
+                                                    <div class="fileSize">
+                                                        <!-- 🔥 RENDER DYNAMIC FILE SIZE 🔥 -->
+                                                        <span class="fileSize">&nbsp;(@displayFileSize)</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </li>
+                                }
+                            }
+                        </ul>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 🔥 LIVE SEARCH SCRIPT (No Backend Needed) 🔥 -->
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const searchInput = document.getElementById('cert-search-input');
+        const certItems = document.querySelectorAll('.cert-item');
+
+        searchInput.addEventListener('keyup', function () {
+            const filter = searchInput.value.toLowerCase();
+
+            certItems.forEach(function (item) {
+                const title = item.getAttribute('data-title');
+                if (title.includes(filter)) {
+                    item.style.display = '';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        });
+    });
+</script>

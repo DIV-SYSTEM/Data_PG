@@ -1,0 +1,323 @@
+﻿@using System.Linq
+@using Umbraco.Cms.Core.Models.Blocks
+@using Umbraco.Cms.Core.Models.PublishedContent
+@using Umbraco.Cms.Core.Strings
+@using Umbraco.Extensions
+@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+@{
+    // 🔥 MAGIC LINE 1: Teammate's Master Layout Link
+    Layout = "~/Views/Layout/_Master.cshtml";
+
+    // ==========================================
+    // 1. BANNER VARIABLES
+    // ==========================================
+    var bannerMedia = Model.Value<IPublishedContent>("bannerImage");
+    var bannerImage = bannerMedia != null ? bannerMedia.Url() : "/themes/powergrid/images/banner-bg1.jpg";
+    var pageTitle = Model.HasValue("customPageTitle") ? Model.Value<string>("customPageTitle") : Model.Name;
+    var homeNode = Model.Root();
+
+    // ==========================================
+    // 2. WHO WE ARE VARIABLES
+    // ==========================================
+    var whoWeAreTitle = Model.Value<string>("whoWeAreTitle", fallback: Fallback.ToDefaultValue, defaultValue: "WHO WE ARE");
+    var whoWeAreSubtitle = Model.Value<IHtmlEncodedString>("whoWeAreSubtitle"); // RTE (Tagline + Bullet points + Ratings)
+    var whoWeAreMedia = Model.Value<IPublishedContent>("whoWeAreImage");
+    var whoWeAreImgUrl = whoWeAreMedia != null ? whoWeAreMedia.Url() : "/sites/default/files/inline-images/who-we-are-img.jpg";
+    var whoWeAreQuote = Model.Value<string>("whoWeAreQuote", fallback: Fallback.ToDefaultValue, defaultValue: "Achieving Continuous Improvements Through Innovation and State of the Art Technology.");
+
+    // ==========================================
+    // 3. SECTIONS DATA (Block Lists)
+    // ==========================================
+    var companyCards = Model.Value<BlockListModel>("companyCards");
+    var keyStatsLeftContent = Model.Value<IHtmlEncodedString>("keyStatsLeftContent");
+    var keyStatsColumns = Model.Value<BlockListModel>("keyStatsColumns");
+    var whatWeDoIntro = Model.Value<IHtmlEncodedString>("whatWeDoIntro");
+    var whatWeDoRows = Model.Value<BlockListModel>("whatWeDoRows");
+}
+
+<!-- ================= INNER BANNER SECTION (Teammate's Setup) ================= -->
+<section class="innerBanner directorsBanner aos-init aos-animate" data-aos="fade-in">
+    <div class="bannerBg">
+        <div class="parallaxBg" style="top: -20%;">
+            <img src="@bannerImage" alt="@pageTitle" title="@pageTitle">
+        </div>
+    </div>
+    <div class="container">
+        <div class="innerBannerWrap d-flex flex-column justify-content-between">
+            <div class="bannerSpc"></div>
+            <h1 class="h2">@pageTitle</h1>
+
+            <!-- 🔥 DYNAMIC BREADCRUMB (DEEP FIXED) 🔥 -->
+            <div class="region region-breadcrumb">
+                <div id="block-powergrid-breadcrumbs" class="block block-system block-system-breadcrumb-block">
+                    <ul class="breadcrumb">
+                        <li class="breadcrumb-item">
+                            <a href="@homeNode.Url()">@homeNode.Name</a>
+                        </li>
+
+                        <!-- Skipped IsVisible(), Added Reverse(), Skipped structural folders -->
+                        @foreach (var item in Model.Ancestors().Reverse().Where(x => x.Level > 1 && x.Name != "Header & Nav Items"))
+                        {
+                            <li class="breadcrumb-item">
+                                @if (item.TemplateId > 0)
+                                {
+                                    <a href="@item.Url()">@item.Name</a>
+                                }
+                                else
+                                {
+                                    <a href="javascript:void(0);" style="cursor: default; text-decoration: none;">@item.Name</a>
+                                }
+                            </li>
+                        }
+
+                        <li class="breadcrumb-item active" aria-current="page">@pageTitle</li>
+                    </ul>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</section>
+
+<!-- ================= WHO WE ARE SECTION ================= -->
+<section class="contentWithImg" id="content">
+    <div class="container">
+        <div class="contentWithImgWrap d-flex flex-wrap">
+            <div class="highlight">
+                <div class="region region-highlighted">
+                    <div data-drupal-messages-fallback="" class="hidden"></div>
+                </div>
+            </div>
+
+            <article data-history-node-id="@Model.Id">
+                <div class="node node--type-page node--view-mode-full clearfix">
+                    <div class="field field--name-body field--type-text-with-summary field--label-visually_hidden">
+                        <div class="field__item">
+                            <div class="colLeft">
+                                <div class="contentBoxWrap">
+                                    <h2 class="h2 aos-init aos-animate" data-aos="fade-up" data-aos-delay="0">@whoWeAreTitle</h2>
+
+                                    <!-- Subtitle, Bullet lists, and Ratings will be managed via Rich Text to keep it easy for editors -->
+                                    <div class="subtitleTagline aos-init aos-animate" data-aos="fade-up" data-aos-delay="100">
+                                        @if (whoWeAreSubtitle != null)
+                                        {
+                                            @whoWeAreSubtitle
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="colRight aos-init aos-animate" data-aos="fade-up" data-aos-delay="200">
+                                <div class="quoteImgBox d-flex align-items-end">
+                                    <div class="imgWrap">
+                                        <div class="parallaxBg" style="top: -1.5255%;">
+                                            <img src="@whoWeAreImgUrl" alt="@whoWeAreTitle">
+                                        </div>
+                                    </div>
+                                    <div class="quoteBox">
+                                        <div class="quoteBoxContent">@whoWeAreQuote</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </article>
+        </div>
+    </div>
+</section>
+
+<!-- ================= TRANSMISSION CARDS SECTION ================= -->
+<div class="region region-company-overview">
+    <section class="transmissionSection bgGray">
+        <div class="container">
+            <div id="block-istscompanyoverview" class="block block-block-content">
+                <div class="field field--name-body field--type-text-with-summary field--label-visually_hidden">
+                    <div class="field__item">
+
+                        <div class="transmissionWrap d-flex flex-wrap">
+                            @if (companyCards != null && companyCards.Any())
+                            {
+                                int delay = 100;
+                                foreach (var card in companyCards)
+                                {
+                                    var cardImg = card.Content.Value<IPublishedContent>("cardImage");
+                                    var cardImgUrl = cardImg != null ? cardImg.Url() : "/themes/powergrid/images/box-img1.jpg";
+                                    var cardTitle = card.Content.Value<string>("cardTitle");
+                                    var cardList = card.Content.Value<IHtmlEncodedString>("cardBulletList");
+
+                                    <div class="transmissionCol aos-init aos-animate" data-aos="fade-up" data-aos-delay="@delay">
+                                        <div class="cardBox">
+                                            <div class="imgWrap">
+                                                <a href="#nolink" title="@cardTitle">
+                                                    <img src="@cardImgUrl" alt="@cardTitle" width="440" height="330">
+                                                </a>
+                                            </div>
+                                            <div class="cardBoxContent">
+                                                <h4 class="h4"><a href="#nolink" title="@cardTitle">@cardTitle</a></h4>
+                                                @if (cardList != null)
+                                                {
+                                                    @cardList
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                    delay += 100;
+                                }
+                            }
+                        </div>
+
+                        <!-- Mobile Slider View (Duplicates the data for Swiper JS) -->
+                        <div class="transMissionmobileSlider">
+                            <div class="swiper-container">
+                                <div class="swiper-wrapper">
+                                    @if (companyCards != null && companyCards.Any())
+                                    {
+                                        foreach (var card in companyCards)
+                                        {
+                                            var cardImg = card.Content.Value<IPublishedContent>("cardImage");
+                                            var cardImgUrl = cardImg != null ? cardImg.Url() : "/themes/powergrid/images/box-img1.jpg";
+                                            var cardTitle = card.Content.Value<string>("cardTitle");
+                                            var cardList = card.Content.Value<IHtmlEncodedString>("cardBulletList");
+
+                                            <div class="swiper-slide">
+                                                <div class="cardBox">
+                                                    <div class="imgWrap">
+                                                        <a href="#nolink" title="@cardTitle">
+                                                            <img src="@cardImgUrl" alt="@cardTitle" width="440" height="330">
+                                                        </a>
+                                                    </div>
+                                                    <div class="cardBoxContent">
+                                                        <h4 class="h4"><a href="#nolink" title="@cardTitle">@cardTitle</a></h4>
+                                                        @if (cardList != null)
+                                                        {
+                                                            @cardList
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        }
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<!-- ================= KEY STATISTICS SECTION ================= -->
+<section class="keyStatistics">
+    <div id="block-keystatistics" class="block block-block-content">
+        <div class="field field--name-body field--type-text-with-summary field--label-visually_hidden">
+            <div class="field__item">
+                <div class="keyBg">
+                    <!-- Static BG for now, can be made dynamic if needed -->
+                    <div class="parallaxBg" style="background-image: url('/themes/powergrid/images/box-img3.jpg'); top: -1.5255%;">&nbsp;</div>
+                </div>
+                <div class="container">
+                    <div class="keyStatisticsWrap d-flex flex-wrap">
+
+                        <div class="colLeft aos-init aos-animate" data-aos="fade-up" data-aos-delay="100">
+                            <div class="keyStatisticsContent d-flex flex-column">
+                                @if (keyStatsLeftContent != null)
+                                {
+                                    @keyStatsLeftContent
+                                }
+                            </div>
+                        </div>
+
+                        <div class="colRight">
+                            <div class="keyCols d-flex">
+                                @if (keyStatsColumns != null && keyStatsColumns.Any())
+                                {
+                                    int statDelay = 100;
+                                    foreach (var col in keyStatsColumns)
+                                    {
+                                        var colTitle = col.Content.Value<string>("columnTitle");
+                                        var colStats = col.Content.Value<IHtmlEncodedString>("columnStatisticsHtml");
+
+                                        <div class="colWrap aos-init" data-aos="fade-up" data-aos-delay="@statDelay">
+                                            <h4 class="h4">@colTitle</h4>
+                                            <div class="keyList">
+                                                @if (colStats != null)
+                                                {
+                                                    @colStats
+                                                }
+                                            </div>
+                                        </div>
+                                        statDelay += 100;
+                                    }
+                                }
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ================= WHAT WE DO SECTION ================= -->
+<section class="whatWeDo">
+    <div class="container">
+        <div id="block-whatwedo" class="block block-block-content">
+            <div class="titleWrap aos-init" data-aos="fade-up" data-aos-delay="0">
+                <h2 class="h2"> What We Do</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="field field--name-body field--type-text-with-summary field--label-visually_hidden">
+        <div class="field__item">
+            <div class="subtitleTagline aos-init aos-animate container" data-aos="fade-up" data-aos-delay="100">
+                @if (whatWeDoIntro != null)
+                {
+                    @whatWeDoIntro
+                }
+            </div>
+
+            @if (whatWeDoRows != null && whatWeDoRows.Any())
+            {
+                int index = 0;
+                foreach (var row in whatWeDoRows)
+                {
+                    var rowImg = row.Content.Value<IPublishedContent>("rowImage");
+                    var rowImgUrl = rowImg != null ? rowImg.Url() : "";
+                    var rowTitle = row.Content.Value<string>("rowTitle");
+                    var rowContent = row.Content.Value<IHtmlEncodedString>("rowContent");
+
+                    // Logic to alternate grey background and reverse column layout
+                    var isEven = index % 2 != 0;
+                    var wrapperClass = isEven ? "twoColBoxWrap grayOverlay" : "twoColBoxWrap";
+                    var colClass = isEven ? "twoColBox d-flex flex-wrap reverseCol" : "twoColBox d-flex flex-wrap";
+
+                    <div class="@wrapperClass">
+                        <div class="container">
+                            <div class="@colClass">
+                                <div class="imgWrap aos-init" data-aos="fade-up" data-aos-delay="100">
+                                    @if (!string.IsNullOrEmpty(rowImgUrl))
+                                    {
+                                        <img src="@rowImgUrl" alt="@rowTitle">
+                                    }
+                                </div>
+                                <div class="colBoxContent aos-init" data-aos="fade-up" data-aos-delay="200">
+                                    <h3 class="h3">@rowTitle</h3>
+                                    @if (rowContent != null)
+                                    {
+                                        @rowContent
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    index++;
+                }
+            }
+
+        </div>
+    </div>
+</section>

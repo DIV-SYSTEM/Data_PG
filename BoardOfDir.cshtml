@@ -1,0 +1,261 @@
+﻿@using System.Linq
+@using System.Collections.Generic
+@using Umbraco.Cms.Core.Models
+@using Umbraco.Cms.Core.Models.Blocks
+@using Umbraco.Cms.Core.Models.PublishedContent
+@using Umbraco.Cms.Core.Strings
+@using Umbraco.Extensions
+@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+@{
+    Layout = "~/Views/Layout/_Master.cshtml";
+
+    var bannerMedia = Model.Value<IPublishedContent>("bannerImage");
+    var bannerImage = bannerMedia != null ? bannerMedia.Url() : "/sites/default/files/inner_banner_image/bodbannerimg1.png";
+    var pageTitle = Model.HasValue("customPageTitle") ? Model.Value<string>("customPageTitle") : Model.Name;
+    var homeNode = Model.Root();
+
+    var directorList = Model.Value<BlockListModel>("directorList");
+}
+
+<!-- ================= INNER BANNER SECTION ================= -->
+<section class="innerBanner directorsBanner" data-aos="fade-in">
+    <div class="bannerBg">
+        <div class="parallaxBg" style="top: 0%;">
+            <img loading="lazy" src="@bannerImage" width="1417" height="250" alt="@pageTitle">
+        </div>
+    </div>
+    <div class="container">
+        <div class="innerBannerWrap d-flex flex-column justify-content-between">
+            <div class="bannerSpc"></div>
+
+            <h1 class="h2">@pageTitle</h1>
+
+            <div class="region region-breadcrumb">
+                <div id="block-powergrid-breadcrumbs" class="block block-system block-system-breadcrumb-block">
+                    <ul class="breadcrumb">
+                        <li class="breadcrumb-item">
+                            <a href="@homeNode.Url()">@homeNode.Name</a>
+                        </li>
+
+                        @foreach (var item in Model.Ancestors().Reverse().Where(x => x.Level > 1 && x.Name != "Header & Nav Items"))
+                        {
+                            <li class="breadcrumb-item">
+                                @if (item.TemplateId > 0)
+                                {
+                                    <a href="@item.Url()">@item.Name</a>
+                                }
+                                else
+                                {
+                                    <a href="javascript:void(0);" style="cursor: default; text-decoration: none;">@item.Name</a>
+                                }
+                            </li>
+                        }
+
+                        <li class="breadcrumb-item active" aria-current="page">@pageTitle</li>
+                    </ul>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</section>
+
+<!-- ================= MAIN CONTENT SECTION ================= -->
+<section class="pageSpc" id="content">
+    <div class="container">
+        <div class="highlight">
+            <div class="region region-highlighted">
+                <div data-drupal-messages-fallback="" class="hidden"></div>
+            </div>
+        </div>
+
+        <div class="row gx-5">
+            <div class="col-12">
+                
+                <!-- ========================================================== -->
+                <!-- VIEW 1: DIRECTORS LIST (Visible by default)                -->
+                <!-- ========================================================== -->
+                <div id="view-directors-list">
+                    <section class="boardOfDirectors" style="padding-top:0;">
+                        <div class="container" style="padding:0;">
+                            <ul class="directorsList">
+
+                                @if (directorList != null && directorList.Any())
+                                {
+                                    int delay = 100;
+                                    int index = 0; // 🔥 Unique ID tracker for SPA logic
+                                    
+                                    foreach (var director in directorList)
+                                    {
+                                        var img = director.Content.Value<IPublishedContent>("directorImage");
+                                        var imgUrl = img != null ? img.Url() : "";
+                                        var name = director.Content.Value<string>("directorName");
+                                        var designation = director.Content.Value<string>("directorDesignation");
+                                        var email = director.Content.Value<string>("directorEmail");
+                                        
+                                        // 🧠 Fetching Rich Text Editor Bio Safely
+                                        var rawBio = director.Content.Value<IHtmlEncodedString>("directorBio")?.ToHtmlString();
+                                        if (string.IsNullOrWhiteSpace(rawBio)) { rawBio = director.Content.Value<string>("directorBio") ?? ""; }
+
+                                        <li data-aos="fade-up" data-aos-delay="@delay">
+                                            <div class="directorBox d-flex flex-wrap align-items-center">
+
+                                                <div class="imgWrap">
+                                                    @if (!string.IsNullOrEmpty(imgUrl))
+                                                    {
+                                                        <img src="@imgUrl" alt="@name">
+                                                    }
+                                                </div>
+
+                                                <div class="directorInfo">
+                                                    <h4 class="h4">@name</h4>
+
+                                                    @if (!string.IsNullOrWhiteSpace(designation))
+                                                    {
+                                                        <div class="designation">@designation</div>
+                                                    }
+
+                                                    <!-- Adding a small CSS clamp to show only first 3 lines of bio in the list -->
+                                                    @if (!string.IsNullOrWhiteSpace(rawBio))
+                                                    {
+                                                        <div style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; margin-bottom: 15px;">
+                                                            @Html.Raw(rawBio)
+                                                        </div>
+                                                    }
+
+                                                    <!-- 🔥 SPA DYNAMIC READ MORE BUTTON 🔥 -->
+                                                    <a href="javascript:void(0);" onclick="openDetailView(@index)" class="arrowLink blueLink" title="Read More about @name">
+                                                        Read More <i class="fa fa-angle-right" aria-hidden="true"></i>
+                                                    </a>
+                                                </div>
+
+                                            </div>
+
+                                            <!-- 🧠 INVISIBLE DATA STORE FOR JAVASCRIPT 🧠 -->
+                                            <div style="display: none;">
+                                                <div id="data-name-@index">@name</div>
+                                                <div id="data-desig-@index">@designation</div>
+                                                <div id="data-email-@index">@email</div>
+                                                <input type="hidden" id="data-img-@index" value="@imgUrl" />
+                                                <div id="data-bio-@index">@Html.Raw(rawBio)</div>
+                                            </div>
+                                        </li>
+                                        
+                                        delay += 100;
+                                        index++;
+                                    }
+                                }
+
+                            </ul>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- ========================================================== -->
+                <!-- VIEW 2: DIRECTOR DETAIL (Hidden by default)                -->
+                <!-- Exact Original Drupal HTML Structure for Green Circle CSS  -->
+                <!-- ========================================================== -->
+                <div id="view-director-detail" style="display: none;">
+                    
+                    <!-- Back Button -->
+                    <div class="mb-5">
+                        <a href="javascript:void(0);" onclick="closeDetailView()" class="button" style="background: #1a4f8f; border-color: #1a4f8f; padding: 10px 20px;">
+                            <i class="fa fa-angle-left" style="margin-right: 8px;"></i> Back to Board of Directors
+                        </a>
+                    </div>
+
+                    <!-- Original Detail Structure -->
+                    <article data-history-node-id="dynamic">
+                        <div class="node node--type-key-person node--view-mode-full clearfix">
+                            
+                            <!-- Green Circle Image Target -->
+                            <div class="field field--name-field-key-person-image field--type-image field--label-hidden field__item">  
+                                <img loading="lazy" id="detail-img" src="" width="454" height="529" alt="">
+                            </div>
+                            
+                            <h2 class="h3" id="detail-name"></h2>
+                            
+                            <div class="field field--name-field-key-person-designation field--type-entity-reference field--label-hidden field__item" id="detail-desig"></div>
+                            
+                            <div class="field field--name-field-board-of-directors-emailid field--type-email field--label-visually_hidden" id="detail-email-container">
+                                <div class="field__label visually-hidden">Board of Directors Emailid</div>
+                                <div class="field__item"><a id="detail-email-link" href="#" style="color:#1a4f8f; text-decoration:none;"><span id="detail-email-text"></span></a></div>
+                            </div>
+                            
+                            <div class="field field--name-body field--type-text-with-summary field--label-visually_hidden">
+                                <div class="field__label visually-hidden">Body</div>
+                                <!-- Full Rich Text Bio injected here -->
+                                <div class="field__item" id="detail-bio"></div>
+                            </div>
+                            
+                        </div>
+                    </article>
+
+                </div>
+
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 🧠 SPA LOGIC JAVASCRIPT 🧠 -->
+<script>
+    function openDetailView(index) {
+        // 1. Fetch data from the hidden HTML tags of the clicked card
+        const name = document.getElementById('data-name-' + index).innerHTML;
+        const desig = document.getElementById('data-desig-' + index).innerHTML;
+        const email = document.getElementById('data-email-' + index).innerHTML;
+        const imgUrl = document.getElementById('data-img-' + index).value;
+        const bioHtml = document.getElementById('data-bio-' + index).innerHTML;
+
+        // 2. Populate the Detail View Template
+        document.getElementById('detail-name').innerHTML = name;
+        document.getElementById('detail-desig').innerHTML = desig;
+        
+        // Email Handling
+        const emailContainer = document.getElementById('detail-email-container');
+        if (email && email.trim() !== '') {
+            document.getElementById('detail-email-text').innerText = email;
+            document.getElementById('detail-email-link').href = 'mailto:' + email.trim();
+            emailContainer.style.display = 'block';
+        } else {
+            emailContainer.style.display = 'none';
+        }
+
+        // Image Handling
+        const imgElement = document.getElementById('detail-img');
+        if (imgUrl && imgUrl.trim() !== '') {
+            imgElement.src = imgUrl;
+            imgElement.alt = name;
+            imgElement.style.display = 'inline-block';
+        } else {
+            imgElement.style.display = 'none';
+        }
+
+        // Bio (RTE) Handling
+        document.getElementById('detail-bio').innerHTML = bioHtml;
+
+        // 3. UI Transition: Hide List, Show Detail
+        document.getElementById('view-directors-list').style.display = 'none';
+        document.getElementById('view-director-detail').style.display = 'block';
+
+        // 4. Smooth Scroll to the top of the content block
+        const contentBlock = document.getElementById('content');
+        const offsetPosition = contentBlock.getBoundingClientRect().top + window.pageYOffset - 50; 
+        window.scrollTo({ top: offsetPosition, behavior: 'smooth' });
+    }
+
+    function closeDetailView() {
+        // Clear Bio to prevent heavy DOM retention when hidden
+        document.getElementById('detail-bio').innerHTML = '';
+        
+        // Revert UI Transition
+        document.getElementById('view-director-detail').style.display = 'none';
+        document.getElementById('view-directors-list').style.display = 'block';
+        
+        // Smooth scroll back to list
+        const contentBlock = document.getElementById('content');
+        const offsetPosition = contentBlock.getBoundingClientRect().top + window.pageYOffset - 50;
+        window.scrollTo({ top: offsetPosition, behavior: 'smooth' });
+    }
+</script>

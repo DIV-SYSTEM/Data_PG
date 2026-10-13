@@ -1,0 +1,289 @@
+﻿@using Umbraco.Cms.Web.Common.PublishedModels;
+@using Umbraco.Cms.Core.Models.Blocks;
+@using Umbraco.Cms.Core.Models;
+@using Umbraco.Extensions;
+@inherits Umbraco.Cms.Web.Common.Views.UmbracoViewPage
+@{
+    Layout = "~/Views/Layout/_Master.cshtml";
+
+    var annualReportsList = Model.Value<BlockListModel>("pageContent");
+    var showPagination = Model.Value<bool>("showPagination", fallback: Fallback.ToDefaultValue, defaultValue: false);
+
+    var archiveTitle = Model.Value<string>("archiveButtonTitle");
+    bool isArchiveView = Context.Request.Query["view"] == "archive";
+
+    string buttonText = isArchiveView ? $"Back to {Model.Name}" : archiveTitle;
+    string buttonLink = isArchiveView ? Model.Url() : Model.Url() + "?view=archive";
+}
+
+@await Html.PartialAsync("~/Views/Partials/singleblock/_InnerBanner.cshtml", Model)
+
+<section class="pageSpc" id="content">
+    <div class="container">
+        <div class="row gx-5">
+            <div class="col-12">
+                <div class="views-element-container">
+                    <div class="js-view-dom-id-167034d2a79277d94f1806bd040fdaa9eff45c84cb221543533536a969a1a96a">
+
+                        @if (!string.IsNullOrWhiteSpace(archiveTitle))
+                        {
+                            <div class="mb-5 pb-4">
+                                <div align="right">
+                                    <a class="button" href="@buttonLink">@buttonText</a>
+                                </div>
+                            </div>
+                        }
+
+                        <style>
+                            .views-exposed-form { display: flex !important; flex-wrap: wrap; align-items: flex-end; gap: 20px; margin-bottom: 45px !important; }
+                            .views-exposed-form .form-item-title { flex: 1; max-width: 450px; margin-bottom: 0 !important; }
+                            .views-exposed-form .form-item-title input { width: 100%; }
+                            .views-exposed-form .form-actions { display: flex; gap: 10px; margin-bottom: 0 !important; margin-top: 0 !important; }
+                            @@media (max-width: 767px) {
+                                .views-exposed-form { flex-direction: column; align-items: stretch; gap: 15px; }
+                                .views-exposed-form .form-item-title { max-width: 100%; }
+                                .views-exposed-form .form-actions { width: 100%; }
+                                .views-exposed-form .form-actions .button { flex: 1; }
+                            }
+                            
+                            /* Pagination UI Styles */
+                            .pager__item { cursor: pointer; }
+                            .pager__item.disabled a { color: #ccc; cursor: not-allowed; pointer-events: none; border-color: #eee; }
+                        </style>
+
+                        <!-- SEARCH FORM -->
+                        <form class="views-exposed-form" autocomplete="off" action="" method="get" id="hybrid-search-form">
+                            <div class="js-form-item form-item js-form-type-textfield form-item-title js-form-item-title">
+                                <label for="edit-title">Title</label>
+                                <input type="text" id="edit-title" name="title" value="" size="30" maxlength="128" class="form-text" placeholder="Search reports...">
+                            </div>
+                            <div class="form-actions js-form-wrapper form-wrapper" id="edit-actions">
+                                <input type="submit" id="edit-submit-annual-quarterly-results" value="Search" class="button js-form-submit form-submit">
+                                <input type="button" id="reset-search-btn" value="Reset" class="button js-form-submit form-submit" style="display: none; margin-left: 8px;">
+                            </div>
+                        </form>
+
+                        <div id="no-records-msg" style="display: none; margin-bottom: 30px; font-size: 15px; color: #333;">
+                            No active record(s) for this Section.
+                        </div>
+
+                        <div class="annualReportsListWrap">
+                            <ul class="annualReportsList d-flex flex-wrap" id="reports-container">
+                                @if (annualReportsList != null && annualReportsList.Any())
+                                {
+                                    foreach (var item in annualReportsList)
+                                    {
+                                        var isArchived = item.Content.Value<bool>("isArchived");
+
+                                        if (isArchiveView && !isArchived) { continue; }
+                                        if (!isArchiveView && isArchived) { continue; }
+
+                                        var reportTitle = item.Content.Value<string>("reportTitle");
+                                        var thumbnailImage = item.Content.Value<IPublishedContent>("thumbnailImage")?.Url() ?? "/sites/default/files/styles/pdf_image_style/public/default_images/book-placeholder_1_0_1.png";
+                                        var pdfDocument = item.Content.Value<IPublishedContent>("pdfDocument");
+                                        var externalLink = item.Content.Value<Link>("externalLink");
+                                        
+                                        var manualFileSize = item.Content.Value<string>("fileSize");
+                                        
+                                        var finalUrl = "#"; 
+                                        var finalTitle = reportTitle; 
+                                        var isExternal = false;
+                                        string displayFileSize = manualFileSize;
+
+                                        if (externalLink != null) 
+                                        { 
+                                            finalUrl = externalLink.Url; 
+                                            finalTitle = externalLink.Name ?? reportTitle; 
+                                            isExternal = true; 
+                                        }
+                                        else if (pdfDocument != null) 
+                                        { 
+                                            finalUrl = pdfDocument.Url(); 
+                                            finalTitle = pdfDocument.Name; 
+                                            
+                                            if (string.IsNullOrWhiteSpace(displayFileSize))
+                                            {
+                                                var bytes = pdfDocument.Value<long>("umbracoBytes");
+                                                if (bytes > 0)
+                                                {
+                                                    if (bytes >= 1048576) displayFileSize = (bytes / 1048576D).ToString("0.##") + " MB";
+                                                    else displayFileSize = (bytes / 1024D).ToString("0.##") + " KB";
+                                                }
+                                            }
+                                        }
+
+                                        string hoverTooltip = string.IsNullOrEmpty(displayFileSize) ? reportTitle : $"{reportTitle} ({displayFileSize})";
+
+                                        // JS ko classify karne ke liye 'report-list-item' class zaroori hai
+                                        <li class="report-list-item">
+                                            <div class="reportBox">
+                                                <div class="imgWrap">
+                                                    <span><img alt="@reportTitle" src="@thumbnailImage" title="@hoverTooltip"></span>
+                                                </div>
+                                                <div class="reportBoxContent"><h4 class="report-title-text">@reportTitle</h4></div>
+                                                <div class="downloadBox">
+                                                    <div class="iconWrap">
+                                                        <a href="@finalUrl" target="_blank" title="@finalTitle"></a>
+                                                        <div class="iconImg">
+                                                            @if (isExternal) { <img src="https://www.powergrid.in/themes/powergrid/images/external-link-icon-white.png" alt="External Link"> }
+                                                            else { <img src="https://www.powergrid.in/themes/powergrid/images/pdf-white.png" alt="PDF Icon"> }
+                                                        </div>
+                                                        @if (!string.IsNullOrEmpty(displayFileSize) && !isExternal) { 
+                                                            <div class="fileSize"><span class="fileSize">&nbsp;(@displayFileSize)</span></div> 
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    }
+                                }
+                            </ul>
+                        </div>
+
+                        <!-- 🧠 DYNAMIC PAGINATION UI CONTAINER (Render only if showPagination is TRUE) -->
+                        @if (showPagination)
+                        {
+                            <div class="pager" id="pagination-block" role="navigation" style="display: none;">
+                                <ul class="pager__items js-pager__items" id="pagination-list">
+                                    <!-- JS will inject page numbers here -->
+                                </ul>
+                            </div>
+                        }
+                        else
+                        {
+                            // Ek hidden element chhod diya taaki JS ko errors na aayein agar toggle off ho
+                            <div id="pagination-block" style="display:none;"></div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 🔥 MASTER JS: Hybrid Search + Smart Pagination 🔥 -->
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        // --- DOM Elements ---
+        const searchInput = document.getElementById("edit-title");
+        const searchForm = document.getElementById("hybrid-search-form");
+        const resetBtn = document.getElementById("reset-search-btn");
+        const noRecordsMsg = document.getElementById("no-records-msg");
+        const allItems = Array.from(document.querySelectorAll(".report-list-item"));
+        
+        const paginationBlock = document.getElementById("pagination-block");
+        const paginationList = document.getElementById("pagination-list");
+
+        // --- Config ---
+        // Backend toggle check: Agar '#pagination-list' DOM me nahi hai matlab toggle OFF hai.
+        const isPaginationEnabled = paginationList !== null;
+        const itemsPerPage = 20; // 5 rows * 4 items
+        let currentPage = 1;
+
+        // --- Core Render Logic ---
+        function renderUI() {
+            const query = searchInput.value.toLowerCase().trim();
+            resetBtn.style.display = query.length > 0 ? "inline-block" : "none";
+
+            // 1. Filter items based on search query
+            const filteredItems = allItems.filter(item => {
+                const titleEl = item.querySelector(".report-title-text");
+                return titleEl && titleEl.textContent.toLowerCase().includes(query);
+            });
+
+            // 2. Hide all items initially
+            allItems.forEach(item => item.style.display = "none");
+
+            // 3. Handle No Records Message
+            if (filteredItems.length === 0 && allItems.length > 0) {
+                noRecordsMsg.style.display = "block";
+                if (paginationBlock) paginationBlock.style.display = "none";
+                return;
+            } else {
+                noRecordsMsg.style.display = "none";
+            }
+
+            // 4. Pagination & Rendering Logic
+            if (isPaginationEnabled && query.length === 0) {
+                // TOGGLE ON & NO SEARCH: Apply Pagination
+                const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+                
+                // Boundaries fix
+                if (currentPage < 1) currentPage = 1;
+                if (currentPage > totalPages) currentPage = totalPages;
+
+                const startIndex = (currentPage - 1) * itemsPerPage;
+                const endIndex = startIndex + itemsPerPage;
+
+                // Show only items for current page
+                const itemsToShow = filteredItems.slice(startIndex, endIndex);
+                itemsToShow.forEach(item => item.style.display = "");
+
+                // Build Pagination HTML
+                if (totalPages > 1) {
+                    paginationBlock.style.display = "block";
+                    buildPaginationUI(totalPages);
+                } else {
+                    paginationBlock.style.display = "none";
+                }
+            } else {
+                // TOGGLE OFF -OR- SEARCH IS ACTIVE: Show all filtered items (No pagination)
+                filteredItems.forEach(item => item.style.display = "");
+                if (paginationBlock) paginationBlock.style.display = "none";
+            }
+        }
+
+        // --- Pagination UI Builder ---
+        function buildPaginationUI(totalPages) {
+            paginationList.innerHTML = "";
+
+            // Previous Button
+            const prevLi = document.createElement("li");
+            prevLi.className = `pager__item pager__item--previous ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a href="javascript:void(0)">‹ Previous</a>`;
+            if (currentPage > 1) {
+                prevLi.addEventListener("click", () => { currentPage--; renderUI(); });
+            }
+            paginationList.appendChild(prevLi);
+
+            // Page Numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement("li");
+                li.className = `pager__item ${currentPage === i ? 'is-active' : ''}`;
+                li.innerHTML = `<a href="javascript:void(0)">${i}</a>`;
+                li.addEventListener("click", () => { currentPage = i; renderUI(); });
+                paginationList.appendChild(li);
+            }
+
+            // Next Button
+            const nextLi = document.createElement("li");
+            nextLi.className = `pager__item pager__item--next ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a href="javascript:void(0)">Next ›</a>`;
+            if (currentPage < totalPages) {
+                nextLi.addEventListener("click", () => { currentPage++; renderUI(); });
+            }
+            paginationList.appendChild(nextLi);
+        }
+
+        // --- Event Listeners ---
+        searchInput.addEventListener("input", () => {
+            currentPage = 1; // Reset to page 1 on search
+            renderUI();
+        });
+        
+        searchForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            currentPage = 1;
+            renderUI();
+        });
+        
+        resetBtn.addEventListener("click", function () {
+            searchInput.value = "";
+            currentPage = 1;
+            renderUI();
+        });
+
+        // Initialize view
+        renderUI();
+    });
+</script>

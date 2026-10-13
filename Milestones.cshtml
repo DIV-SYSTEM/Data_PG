@@ -1,0 +1,563 @@
+﻿using Microsoft.AspNetCore.Mvc;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Xml.Linq;
+using HtmlAgilityPack;
+using Umbraco.Cms.Core;
+using Umbraco.Cms.Core.IO;
+using Umbraco.Cms.Core.Models;
+using Umbraco.Cms.Core.PropertyEditors;
+using Umbraco.Cms.Core.Services;
+using Umbraco.Cms.Core.Strings;
+
+namespace PowerGridCMS.Controllers
+{
+    public class MigrationPageData
+    {
+        public int OrderId { get; set; }
+        public string PageName { get; set; }
+        public string DocTypeAlias { get; set; }
+        public string TemplateName { get; set; }
+        public string UrlEnglish { get; set; }
+        public string UrlHindi { get; set; }
+    }
+
+    [ApiController]
+    [Route("api/[controller]/[action]")]
+    public class MigrationController : ControllerBase
+    {
+        private readonly IMediaService _mediaService;
+        private readonly IContentService _contentService;
+        private readonly MediaFileManager _mediaFileManager;
+        private readonly MediaUrlGeneratorCollection _mediaUrlGenerators;
+        private readonly IShortStringHelper _shortStringHelper;
+        private readonly IContentTypeBaseServiceProvider _contentTypeBaseServiceProvider;
+        private readonly IContentTypeService _contentTypeService;
+
+        public MigrationController(
+            IMediaService mediaService,
+            IContentService contentService,
+            MediaFileManager mediaFileManager,
+            MediaUrlGeneratorCollection mediaUrlGenerators,
+            IShortStringHelper shortStringHelper,
+            IContentTypeBaseServiceProvider contentTypeBaseServiceProvider,
+            IContentTypeService contentTypeService)
+        {
+            _mediaService = mediaService;
+            _contentService = contentService;
+            _mediaFileManager = mediaFileManager;
+            _mediaUrlGenerators = mediaUrlGenerators;
+            _shortStringHelper = shortStringHelper;
+            _contentTypeBaseServiceProvider = contentTypeBaseServiceProvider;
+            _contentTypeService = contentTypeService;
+        }
+
+        [HttpGet]
+        public async Task<IActionResult> RunMassMigration()
+        {
+            var logResults = new List<object>();
+            string jsonFilePath = Path.Combine(Directory.GetCurrentDirectory(), "Data Automation", "migration_data.json");
+
+            if (!System.IO.File.Exists(jsonFilePath)) return NotFound(new { status = "Error", message = "migration_data.json not found." });
+
+            string jsonContent = await System.IO.File.ReadAllTextAsync(jsonFilePath);
+            if (string.IsNullOrWhiteSpace(jsonContent)) return BadRequest(new { status = "Error", message = "JSON is empty." });
+
+            var pagesFromJson = JsonSerializer.Deserialize<List<MigrationPageData>>(jsonContent);
+            if (pagesFromJson == null || !pagesFromJson.Any()) return BadRequest(new { status = "Error" });
+
+            pagesFromJson = pagesFromJson.OrderBy(p => p.OrderId).ToList();
+
+            using var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0");
+
+            Dictionary<string, string> mediaCache = new Dictionary<string, string>();
+
+            async Task<string> UploadMediaAsync(string src, Uri baseUri, int targetFolderId)
+            {
+                if (string.IsNullOrWhiteSpace(src)) return "";
+                if (mediaCache.ContainsKey(src)) return mediaCache[src];
+
+                try
+                {
+                    if (Uri.TryCreate(baseUri, src, out Uri absUri))
+                    {
+                        var mediaRes = await httpClient.GetAsync(absUri);
+                        if (mediaRes.IsSuccessStatusCode)
+                        {
+                            var fileBytes = await mediaRes.Content.ReadAsByteArrayAsync();
+                            var fileName = Path.GetFileName(absUri.LocalPath);
+                            if (string.IsNullOrWhiteSpace(fileName)) fileName = $"media_{Guid.NewGuid():N}.jpg";
+                            fileName = Uri.UnescapeDataString(fileName);
+
+                            string ext = Path.GetExtension(fileName).ToLower();
+                            string mediaTypeAlias = (ext == ".pdf" || ext == ".doc" || ext == ".docx" || ext == ".xls" || ext == ".xlsx") ? "File" : "Image";
+
+                            var newMedia = _mediaService.CreateMedia(fileName, targetFolderId, mediaTypeAlias);
+                            using (var stream = new MemoryStream(fileBytes))
+                            {
+                                newMedia.SetValue(_mediaFileManager, _mediaUrlGenerators, _shortStringHelper, _contentTypeBaseServiceProvider, Constants.Conventions.Media.File, fileName, stream);
+                            }
+                            _mediaService.Save(newMedia);
+                            string udi = newMedia.GetUdi().ToString();
+                            mediaCache[src] = udi;
+                            return udi;
+                        }
+                    }
+                }
+                catch { }
+                return "";
+            }
+
+            async Task<string> ProcessHtmlMedia(string rawHtml, string pageUrl, int folderId)
+            {
+                if (string.IsNullOrWhiteSpace(rawHtml)) return rawHtml;
+                var doc = new HtmlDocument();
+                doc.LoadHtml(rawHtml);
+                Uri baseUri = new Uri(pageUrl);
+
+                var images = doc.DocumentNode.SelectNodes("//img[@src]");
+                if (images != null)
+                {
+                    foreach (var img in images)
+                    {
+                        string udi = await UploadMediaAsync(img.GetAttributeValue("src", ""), baseUri, folderId);
+                        if (!string.IsNullOrEmpty(udi)) img.SetAttributeValue("src", udi);
+                    }
+                }
+                var links = doc.DocumentNode.SelectNodes("//a[@href]");
+                if (links != null)
+                {
+                    foreach (var link in links)
+                    {
+                        string href = link.GetAttributeValue("href", "");
+                        if (href.EndsWith(".pdf") || href.EndsWith(".doc") || href.EndsWith(".docx"))
+                        {
+                            string udi = await UploadMediaAsync(href, baseUri, folderId);
+                            if (!string.IsNullOrEmpty(udi)) link.SetAttributeValue("href", udi);
+                        }
+                    }
+                }
+                return doc.DocumentNode.OuterHtml;
+            }
+
+            foreach (var page in pagesFromJson)
+            {
+                try
+                {
+                    int mediaFolderId = -1;
+                    string folderName = $"{page.PageName} Media";
+                    var existingFolder = _mediaService.GetRootMedia().FirstOrDefault(m => m.Name.Equals(folderName, StringComparison.OrdinalIgnoreCase) && m.ContentType.Alias == "Folder");
+
+                    if (existingFolder != null) mediaFolderId = existingFolder.Id;
+                    else
+                    {
+                        var newFolder = _mediaService.CreateMedia(folderName, -1, "Folder");
+                        _mediaService.Save(newFolder);
+                        mediaFolderId = newFolder.Id;
+                    }
+
+                    string configPath = Path.Combine(Directory.GetCurrentDirectory(), "Data Automation", "ContentTypes", $"{page.DocTypeAlias}.config");
+                    bool isBlockList = false;
+                    string targetPropertyAlias = "pageContent"; 
+
+                    if (System.IO.File.Exists(configPath))
+                    {
+                        var xDoc = XDocument.Load(configPath);
+                        var propNode = xDoc.Descendants("GenericProperty").FirstOrDefault(p => p.Element("Alias")?.Value == "pageContent" || p.Element("Alias")?.Value == "bodyText" || p.Element("Alias")?.Value == "quarterlyResultsList" || p.Element("Alias")?.Value == "certificatesList" || p.Element("Alias")?.Value == "milestoneList");
+
+                        if (propNode != null)
+                        {
+                            targetPropertyAlias = propNode.Element("Alias")?.Value;
+                            if (propNode.Element("Type")?.Value == "Umbraco.BlockList")
+                            {
+                                isBlockList = true;
+                            }
+                        }
+                    }
+
+                    string processedEn = "";
+                    string processedHi = "";
+                    string archiveBtnEn = "";
+                    string archiveBtnHi = "";
+                    
+                    // Extra dictionary for pages like Milestones that have multiple distinct properties
+                    Dictionary<string, string> extraEn = new Dictionary<string, string>();
+                    Dictionary<string, string> extraHi = new Dictionary<string, string>();
+
+                    if (isBlockList)
+                    {
+                        // 🔥 THE ROUTER: Exact Specific Parsing Logic Based on Razor Docs Provided 🔥
+                        switch (page.DocTypeAlias.ToLower())
+                        {
+                            case "quarterlyresults":
+                                var qEn = await ScrapeQuarterlyResults(page.UrlEnglish, mediaFolderId, httpClient, UploadMediaAsync);
+                                var qHi = await ScrapeQuarterlyResults(page.UrlHindi, mediaFolderId, httpClient, UploadMediaAsync);
+                                processedEn = qEn.Json; archiveBtnEn = qEn.ArchiveBtn;
+                                processedHi = qHi.Json; archiveBtnHi = qHi.ArchiveBtn;
+                                targetPropertyAlias = "quarterlyResultsList"; 
+                                break;
+                                
+                            case "annualresults":
+                                var aEn = await ScrapeAnnualResults(page.UrlEnglish, mediaFolderId, httpClient, UploadMediaAsync);
+                                var aHi = await ScrapeAnnualResults(page.UrlHindi, mediaFolderId, httpClient, UploadMediaAsync);
+                                processedEn = aEn.Json; archiveBtnEn = aEn.ArchiveBtn;
+                                processedHi = aHi.Json; archiveBtnHi = aHi.ArchiveBtn;
+                                targetPropertyAlias = "pageContent"; 
+                                break;
+                                
+                            case "certificates":
+                                var cEn = await ScrapeCertificates(page.UrlEnglish, mediaFolderId, httpClient, UploadMediaAsync);
+                                var cHi = await ScrapeCertificates(page.UrlHindi, mediaFolderId, httpClient, UploadMediaAsync);
+                                processedEn = cEn; 
+                                processedHi = cHi; 
+                                targetPropertyAlias = "certificatesList"; 
+                                break;
+                                
+                            case "milestones":
+                                var mEn = await ScrapeMilestones(page.UrlEnglish, mediaFolderId, httpClient, UploadMediaAsync);
+                                var mHi = await ScrapeMilestones(page.UrlHindi, mediaFolderId, httpClient, UploadMediaAsync);
+                                processedEn = mEn.Json; extraEn = mEn.ExtraProps;
+                                processedHi = mHi.Json; extraHi = mHi.ExtraProps;
+                                targetPropertyAlias = "milestoneList"; 
+                                break;
+                                
+                            default:
+                                throw new Exception($"BlockList parser missing for {page.PageName}");
+                        }
+                    }
+                    else
+                    {
+                        // Generic HTML Scraper for standard RTE pages like Company Overview
+                        async Task<string> ScrapeContentSection(string url)
+                        {
+                            if (string.IsNullOrWhiteSpace(url)) return "";
+                            var response = await httpClient.GetAsync(url);
+                            if (!response.IsSuccessStatusCode) return "";
+                            var htmlDoc = new HtmlDocument();
+                            htmlDoc.LoadHtml(await response.Content.ReadAsStringAsync());
+                            
+                            var targetSection = htmlDoc.DocumentNode.SelectSingleNode("//section[@id='content']")
+                                             ?? htmlDoc.DocumentNode.SelectSingleNode("//div[contains(@class, 'region-content')]")
+                                             ?? htmlDoc.DocumentNode.SelectSingleNode("//main")
+                                             ?? htmlDoc.DocumentNode.SelectSingleNode("//div[@id='block-system-main']");
+                                             
+                            return targetSection != null ? targetSection.OuterHtml : "";
+                        }
+
+                        processedEn = await ProcessHtmlMedia(await ScrapeContentSection(page.UrlEnglish), page.UrlEnglish, mediaFolderId);
+                        processedHi = await ProcessHtmlMedia(await ScrapeContentSection(page.UrlHindi), page.UrlHindi, mediaFolderId);
+                        
+                        if (string.IsNullOrWhiteSpace(processedEn)) throw new Exception($"Scraper could not find main content div on {page.UrlEnglish}");
+                    }
+
+                    string sourceRazor = Path.Combine(Directory.GetCurrentDirectory(), "Data Automation", "RazorTemplates", $"{page.TemplateName}.cshtml");
+                    string targetRazor = Path.Combine(Directory.GetCurrentDirectory(), "Views", $"{page.TemplateName}.cshtml");
+                    if (System.IO.File.Exists(sourceRazor)) System.IO.File.Copy(sourceRazor, targetRazor, true);
+
+                    var newPage = _contentService.Create(page.PageName, -1, page.DocTypeAlias);
+
+                    try { newPage.SetCultureName(page.PageName, "en-US"); } catch { }
+                    try { newPage.SetCultureName($"{page.PageName} (Hindi)", "hi-IN"); } catch { }
+
+                    void SafeSetValue(IContent contentNode, string alias, object value, string cultureCode)
+                    {
+                        if (value == null || string.IsNullOrWhiteSpace(value.ToString())) return;
+                        if (!contentNode.HasProperty(alias)) return; 
+                        
+                        try 
+                        { 
+                            var propertyType = contentNode.Properties[alias]?.PropertyType;
+                            if (propertyType != null && propertyType.VariesByCulture())
+                            {
+                                contentNode.SetValue(alias, value, culture: cultureCode); 
+                            }
+                            else
+                            {
+                                if (cultureCode == "en-US") contentNode.SetValue(alias, value);
+                            }
+                        } 
+                        catch { }
+                    }
+
+                    // 1. Core Metadata
+                    SafeSetValue(newPage, "customPageTitle", page.PageName, "en-US");
+                    SafeSetValue(newPage, "customPageTitle", $"{page.PageName} (Hindi)", "hi-IN");
+                    if (!string.IsNullOrEmpty(archiveBtnEn)) SafeSetValue(newPage, "archiveButtonTitle", archiveBtnEn, "en-US");
+                    if (!string.IsNullOrEmpty(archiveBtnHi)) SafeSetValue(newPage, "archiveButtonTitle", archiveBtnHi, "hi-IN");
+                    SafeSetValue(newPage, "showPagination", true, "en-US");
+
+                    // 2. Extra Properties for Specific Pages (like Milestones Backgrounds)
+                    if (extraEn.Any())
+                    {
+                        foreach (var kvp in extraEn) SafeSetValue(newPage, kvp.Key, kvp.Value, "en-US");
+                        foreach (var kvp in extraHi) SafeSetValue(newPage, kvp.Key, kvp.Value, "hi-IN");
+                    }
+
+                    // 3. Core Content Binding
+                    SafeSetValue(newPage, targetPropertyAlias, processedEn, "en-US");
+                    SafeSetValue(newPage, targetPropertyAlias, processedHi, "hi-IN");
+
+                    if (!isBlockList)
+                    {
+                        if (newPage.HasProperty("pageContent"))
+                        {
+                            SafeSetValue(newPage, "pageContent", processedEn, "en-US");
+                            SafeSetValue(newPage, "pageContent", processedHi, "hi-IN");
+                        }
+                        else if (newPage.HasProperty("bodyText"))
+                        {
+                            SafeSetValue(newPage, "bodyText", processedEn, "en-US");
+                            SafeSetValue(newPage, "bodyText", processedHi, "hi-IN");
+                        }
+                    }
+
+                    _contentService.Save(newPage);
+                    try { _contentService.Publish(newPage, new[] { "en-US", "hi-IN" }, -1); }
+                    catch { try { _contentService.Publish(newPage, new[] { "*" }, -1); } catch { } }
+
+                    logResults.Add(new { page = page.PageName, status = "Success", message = $"Scraped successfully. Main content mapped to: {targetPropertyAlias}" });
+                }
+                catch (Exception ex)
+                {
+                    logResults.Add(new { page = page?.PageName ?? "Unknown", status = "Failed", error = ex.Message });
+                    continue;
+                }
+            }
+
+            return Ok(new { status = "Batch Processing Iteration Complete", totalPages = pagesFromJson.Count, logs = logResults });
+        }
+
+        // =========================================================================
+        // BLOCKLIST BUILDERS (Custom extractors based on Razor Views)
+        // =========================================================================
+        private async Task<(string Json, string ArchiveBtn)> ScrapeQuarterlyResults(string baseUrl, int folderId, HttpClient client, Func<string, Uri, int, Task<string>> uploadMedia)
+        {
+            var yearDocType = _contentTypeService.Get("quarterlyYearItem");
+            var reportDocType = _contentTypeService.Get("quarterlyReportItem");
+            if (yearDocType == null || reportDocType == null) return ("", "");
+
+            var outerLayoutList = new List<object>();
+            var outerContentDataList = new List<object>();
+            string archiveBtnTitle = "";
+
+            var response = await client.GetAsync(baseUrl);
+            if (!response.IsSuccessStatusCode) return ("", "");
+
+            var htmlDoc = new HtmlDocument();
+            htmlDoc.LoadHtml(await response.Content.ReadAsStringAsync());
+
+            var arcNode = htmlDoc.DocumentNode.SelectSingleNode("//a[contains(@href, 'archive/')]");
+            if (arcNode != null) archiveBtnTitle = arcNode.InnerText.Trim();
+
+            var yearNodes = htmlDoc.DocumentNode.SelectNodes("//div[contains(@class, 'accordion-wrap')]");
+            if (yearNodes != null)
+            {
+                foreach (var yearNode in yearNodes)
+                {
+                    string financialYearText = yearNode.SelectSingleNode(".//h4/a")?.InnerText?.Trim() ?? "";
+                    if (string.IsNullOrWhiteSpace(financialYearText)) continue;
+
+                    var reportNodes = yearNode.SelectNodes(".//div[contains(@class, 'reportBox')]");
+                    string innerBlockListJson = "";
+                    var innerLayoutList = new List<object>();
+                    var innerContentDataList = new List<object>();
+
+                    if (reportNodes != null)
+                    {
+                        foreach (var rNode in reportNodes)
+                        {
+                            string rTitle = rNode.SelectSingleNode(".//div[contains(@class, 'reportBoxContent')]/h4")?.InnerText?.Trim() ?? "";
+                            Uri docUri = new Uri(baseUrl);
+                            string rImgUdi = await uploadMedia(rNode.SelectSingleNode(".//div[contains(@class, 'imgWrap')]//img")?.GetAttributeValue("src", ""), docUri, folderId);
+                            string rPdfUdi = await uploadMedia(rNode.SelectSingleNode(".//div[contains(@class, 'downloadBox')]//a")?.GetAttributeValue("href", ""), docUri, folderId);
+
+                            var innerGuid = Guid.NewGuid();
+                            innerLayoutList.Add(new { contentKey = innerGuid });
+                            innerContentDataList.Add(new
+                            {
+                                contentTypeKey = reportDocType.Key,
+                                key = innerGuid,
+                                reportTitle = rTitle,
+                                thumbnailImage = rImgUdi,
+                                pdfDocument = rPdfUdi
+                            });
+                        }
+                        if (innerLayoutList.Any())
+                        {
+                            innerBlockListJson = JsonSerializer.Serialize(new { layout = new Dictionary<string, object> { { "Umbraco.BlockList", innerLayoutList } }, contentData = innerContentDataList, settingsData = new List<object>() });
+                        }
+                    }
+
+                    var outerGuid = Guid.NewGuid();
+                    outerLayoutList.Add(new { contentKey = outerGuid });
+                    outerContentDataList.Add(new
+                    {
+                        contentTypeKey = yearDocType.Key,
+                        key = outerGuid,
+                        financialYear = financialYearText,
+                        reportsList = innerBlockListJson
+                    });
+                }
+            }
+
+            string finalJson = outerLayoutList.Any() ? JsonSerializer.Serialize(new { layout = new Dictionary<string, object> { { "Umbraco.BlockList", outerLayoutList } }, contentData = outerContentDataList, settingsData = new List<object>() }) : "";
+            return (finalJson, archiveBtnTitle);
+        }
+
+        private async Task<(string Json, string ArchiveBtn)> ScrapeAnnualResults(string baseUrl, int folderId, HttpClient client, Func<string, Uri, int, Task<string>> uploadMedia)
+        {
+            var reportDocType = _contentTypeService.Get("annualReportItem");
+            if (reportDocType == null) return ("", "");
+
+            var layoutList = new List<object>();
+            var contentDataList = new List<object>();
+            string archiveBtnTitle = "";
+
+            var response = await client.GetAsync(baseUrl);
+            if (!response.IsSuccessStatusCode) return ("", "");
+
+            var htmlDoc = new HtmlDocument();
+            htmlDoc.LoadHtml(await response.Content.ReadAsStringAsync());
+
+            var arcNode = htmlDoc.DocumentNode.SelectSingleNode("//a[contains(@href, 'archive/')]");
+            if (arcNode != null) archiveBtnTitle = arcNode.InnerText.Trim();
+
+            var reportNodes = htmlDoc.DocumentNode.SelectNodes("//ul[contains(@class, 'annualReportsList')]/li");
+            if (reportNodes != null)
+            {
+                foreach (var rNode in reportNodes)
+                {
+                    string rTitle = rNode.SelectSingleNode(".//div[contains(@class, 'reportBoxContent')]/h4")?.InnerText?.Trim() ?? "";
+                    Uri docUri = new Uri(baseUrl);
+                    string rImgUdi = await uploadMedia(rNode.SelectSingleNode(".//div[contains(@class, 'imgWrap')]//img")?.GetAttributeValue("src", ""), docUri, folderId);
+                    string rPdfUdi = await uploadMedia(rNode.SelectSingleNode(".//div[contains(@class, 'downloadBox')]//a")?.GetAttributeValue("href", ""), docUri, folderId);
+
+                    var itemGuid = Guid.NewGuid();
+                    layoutList.Add(new { contentKey = itemGuid });
+                    contentDataList.Add(new
+                    {
+                        contentTypeKey = reportDocType.Key,
+                        key = itemGuid,
+                        reportTitle = rTitle,
+                        thumbnailImage = rImgUdi,
+                        pdfDocument = rPdfUdi
+                    });
+                }
+            }
+
+            string finalJson = layoutList.Any() ? JsonSerializer.Serialize(new { layout = new Dictionary<string, object> { { "Umbraco.BlockList", layoutList } }, contentData = contentDataList, settingsData = new List<object>() }) : "";
+            return (finalJson, archiveBtnTitle);
+        }
+
+        // 💥 NEW: Scraper specifically built for Certificates Razor Structure 💥
+        private async Task<string> ScrapeCertificates(string baseUrl, int folderId, HttpClient client, Func<string, Uri, int, Task<string>> uploadMedia)
+        {
+            var certDocType = _contentTypeService.Get("certificateItem") ?? _contentTypeService.Get("certificatesItem");
+            if (certDocType == null) return "";
+
+            var layoutList = new List<object>();
+            var contentDataList = new List<object>();
+
+            var response = await client.GetAsync(baseUrl);
+            if (!response.IsSuccessStatusCode) return "";
+
+            var htmlDoc = new HtmlDocument();
+            htmlDoc.LoadHtml(await response.Content.ReadAsStringAsync());
+
+            var certNodes = htmlDoc.DocumentNode.SelectNodes("//li[contains(@class, 'cert-item')] | //div[contains(@class, 'reportBox')]");
+            if (certNodes != null)
+            {
+                foreach (var rNode in certNodes)
+                {
+                    string cTitle = rNode.SelectSingleNode(".//div[contains(@class, 'reportBoxContent')]/h4")?.InnerText?.Trim() ?? "";
+                    if (string.IsNullOrWhiteSpace(cTitle)) continue;
+
+                    Uri docUri = new Uri(baseUrl);
+                    string cImgUdi = await uploadMedia(rNode.SelectSingleNode(".//div[contains(@class, 'imgWrap')]//img")?.GetAttributeValue("src", ""), docUri, folderId);
+                    string cPdfUdi = await uploadMedia(rNode.SelectSingleNode(".//div[contains(@class, 'downloadBox')]//a")?.GetAttributeValue("href", ""), docUri, folderId);
+
+                    var itemGuid = Guid.NewGuid();
+                    layoutList.Add(new { contentKey = itemGuid });
+                    contentDataList.Add(new
+                    {
+                        contentTypeKey = certDocType.Key,
+                        key = itemGuid,
+                        certificateTitle = cTitle,
+                        certificateImage = cImgUdi,
+                        certificateFile = cPdfUdi
+                    });
+                }
+            }
+            return layoutList.Any() ? JsonSerializer.Serialize(new { layout = new Dictionary<string, object> { { "Umbraco.BlockList", layoutList } }, contentData = contentDataList, settingsData = new List<object>() }) : "";
+        }
+
+        // 💥 NEW: Scraper specifically built for Milestones Razor Structure 💥
+        private async Task<(string Json, Dictionary<string, string> ExtraProps)> ScrapeMilestones(string baseUrl, int folderId, HttpClient client, Func<string, Uri, int, Task<string>> uploadMedia)
+        {
+            var mileDocType = _contentTypeService.Get("milestoneItem") ?? _contentTypeService.Get("milestonesItem");
+            var extraProps = new Dictionary<string, string>();
+            if (mileDocType == null) return ("", extraProps);
+
+            var layoutList = new List<object>();
+            var contentDataList = new List<object>();
+
+            var response = await client.GetAsync(baseUrl);
+            if (!response.IsSuccessStatusCode) return ("", extraProps);
+
+            var htmlDoc = new HtmlDocument();
+            htmlDoc.LoadHtml(await response.Content.ReadAsStringAsync());
+            Uri docUri = new Uri(baseUrl);
+
+            // 1. Scrape Background Variables
+            var bgSection = htmlDoc.DocumentNode.SelectSingleNode("//div[contains(@class, 'mileBackground')]");
+            if (bgSection != null)
+            {
+                extraProps["backgroundTitle"] = bgSection.SelectSingleNode(".//div[@class='contentBoxWrap']/h2")?.InnerText?.Trim() ?? "Background";
+                
+                var contentNode = bgSection.SelectSingleNode(".//div[@class='contentBoxWrap']/p");
+                if (contentNode != null) extraProps["backgroundContent"] = contentNode.OuterHtml;
+
+                string bgImgSrc = bgSection.SelectSingleNode(".//div[contains(@class, 'imgWrap')]//img")?.GetAttributeValue("src", "");
+                extraProps["backgroundImage"] = await uploadMedia(bgImgSrc, docUri, folderId);
+
+                extraProps["backgroundQuote"] = bgSection.SelectSingleNode(".//div[@class='quoteBoxContent']")?.InnerText?.Trim() ?? "";
+            }
+
+            // 2. Scrape Sliders (Milestone Data)
+            var slideNodes = htmlDoc.DocumentNode.SelectNodes("//div[contains(@class, 'milestoneSliderWrap')]//div[contains(@class, 'swiper-slide')]");
+            if (slideNodes != null)
+            {
+                foreach (var slide in slideNodes)
+                {
+                    string mYear = slide.SelectSingleNode(".//h3")?.InnerText?.Trim() ?? "";
+                    if (string.IsNullOrWhiteSpace(mYear)) continue;
+
+                    string mImgSrc = slide.SelectSingleNode("./img")?.GetAttributeValue("src", "");
+                    string mImgUdi = await uploadMedia(mImgSrc, docUri, folderId);
+
+                    string mContent = slide.SelectSingleNode(".//p")?.OuterHtml ?? "";
+
+                    var itemGuid = Guid.NewGuid();
+                    layoutList.Add(new { contentKey = itemGuid });
+                    contentDataList.Add(new
+                    {
+                        contentTypeKey = mileDocType.Key,
+                        key = itemGuid,
+                        milestoneYear = mYear,
+                        milestoneImage = mImgUdi,
+                        milestoneContent = mContent
+                    });
+                }
+            }
+
+            string finalJson = layoutList.Any() ? JsonSerializer.Serialize(new { layout = new Dictionary<string, object> { { "Umbraco.BlockList", layoutList } }, contentData = contentDataList, settingsData = new List<object>() }) : "";
+            return (finalJson, extraProps);
+        }
+    }
+}
